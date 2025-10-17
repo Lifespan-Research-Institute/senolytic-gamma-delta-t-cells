@@ -1,0 +1,297 @@
+---
+title: "γδ T Cells Target Senescent Cells and Alleviate Pulmonary Fibrosis"
+author: "Gabriel Meca-Laguna, Tesfahun Dessale Admasu, [...], Amit Sharma"
+subtitle: "Analysis of γδ T cell abundance in the mouse bleomycin-induced pulmonary fibrosis model"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+## Data Information
+
+**Link to access the spatial transcriptomics data:**  
+https://www.ebi.ac.uk/biostudies/studies/S-BSST1409  
+**Download:** mm_visium_spaceranger_output.zip  
+Space Ranger output files ("filtered_feature_bc_matrix.h5", "raw_feature_bc_matrix.h5", "metrics_summary.csv", and the "spatial/" folder) for each individual sample
+
+Samples were pre-processed to remove low quality spots and to remove mitochondrial-read-high spots
+
+## Load Libraries
+
+```{r setup, message=FALSE, warning=FALSE}
+# Load required libraries
+library(Seurat)
+library(dplyr)
+library(ggplot2)
+```
+
+## Define Sample Files
+
+```{r define-files}
+# Define file paths for all processed Seurat objects
+# Samples include vehicle controls and bleomycin-treated mice at day 7 and day 21
+mouse_files <- c(
+  "C:/Users/gabriel.mecalaguna/Documents/processed_mouse_seurat_objects/d21_Veh_2_V10A20-052-A1.rds",
+  "C:/Users/gabriel.mecalaguna/Documents/processed_mouse_seurat_objects/d21_Veh_3_V10A20-053-A1.rds",
+  "C:/Users/gabriel.mecalaguna/Documents/processed_mouse_seurat_objects/d7_BLM_1_V10A20-072-B1.rds",
+  "C:/Users/gabriel.mecalaguna/Documents/processed_mouse_seurat_objects/d7_BLM_2_V10A20-072-C1.rds",
+  "C:/Users/gabriel.mecalaguna/Documents/processed_mouse_seurat_objects/d7_BLM_3_V10A20-072-D1.rds",
+  "C:/Users/gabriel.mecalaguna/Documents/processed_mouse_seurat_objects/d7_BLM_4_V10A20-074-B1.rds",
+  "C:/Users/gabriel.mecalaguna/Documents/processed_mouse_seurat_objects/d7_BLM_5_V10A20-074-C1.rds",
+  "C:/Users/gabriel.mecalaguna/Documents/processed_mouse_seurat_objects/d7_BLM_6_V10A20-074-D1.rds",
+  "C:/Users/gabriel.mecalaguna/Documents/processed_mouse_seurat_objects/d7_BLM_7_V10A20-073-B1.rds",
+  "C:/Users/gabriel.mecalaguna/Documents/processed_mouse_seurat_objects/d7_BLM_8_V10A20-073-C1.rds",
+  "C:/Users/gabriel.mecalaguna/Documents/processed_mouse_seurat_objects/d7_BLM_9_V10A20-073-D1.rds",
+  "C:/Users/gabriel.mecalaguna/Documents/processed_mouse_seurat_objects/d7_Veh_1_V10A20-072-A1.rds",
+  "C:/Users/gabriel.mecalaguna/Documents/processed_mouse_seurat_objects/d7_Veh_2_V10A20-074-A1.rds",
+  "C:/Users/gabriel.mecalaguna/Documents/processed_mouse_seurat_objects/d7_Veh_3_V10A20-073-A1.rds",
+  "C:/Users/gabriel.mecalaguna/Documents/processed_mouse_seurat_objects/d21_BLM_1_V10A20-071-B1.rds",
+  "C:/Users/gabriel.mecalaguna/Documents/processed_mouse_seurat_objects/d21_BLM_2_V10A20-071-C1.rds",
+  "C:/Users/gabriel.mecalaguna/Documents/processed_mouse_seurat_objects/d21_BLM_3_V10A20-071-D1.rds",
+  "C:/Users/gabriel.mecalaguna/Documents/processed_mouse_seurat_objects/d21_BLM_4_V10A20-052-B1.rds",
+  "C:/Users/gabriel.mecalaguna/Documents/processed_mouse_seurat_objects/d21_BLM_5_V10A20-052-C1.rds",
+  "C:/Users/gabriel.mecalaguna/Documents/processed_mouse_seurat_objects/d21_BLM_6_V10A20-052-D1.rds",
+  "C:/Users/gabriel.mecalaguna/Documents/processed_mouse_seurat_objects/d21_BLM_7_V10A20-053-B1.rds",
+  "C:/Users/gabriel.mecalaguna/Documents/processed_mouse_seurat_objects/d21_BLM_8_V10A20-053-C1.rds",
+  "C:/Users/gabriel.mecalaguna/Documents/processed_mouse_seurat_objects/d21_BLM_9_V10A20-053-D1.rds",
+  "C:/Users/gabriel.mecalaguna/Documents/processed_mouse_seurat_objects/d21_Veh_1_V10A20-071-A1.rds"
+)
+```
+
+## γδ T Cell Quantification Analysis
+
+```{r gamma-delta-analysis}
+# Initialize results dataframe
+results_df <- data.frame(
+  sample_name = character(),
+  treatment_group = character(),
+  total_spots = integer(),
+  cd3e_positive = integer(),
+  trdc_positive = integer(),
+  tcrg_c1_positive = integer(),
+  tcrg_c2_positive = integer(),
+  tcrg_c4_positive = integer(),
+  gamma_delta_T_cells = integer(),
+  stringsAsFactors = FALSE
+)
+
+# Process each sample
+for (i in seq_along(mouse_files)) {
+  file_path <- mouse_files[i]
+  
+  # Extract sample name from file path
+  sample_name <- gsub(".*/(d[0-9]+_[A-Za-z]+_[0-9]+_.*)\\.rds$", "\\1", file_path)
+  
+  # Assign treatment groups based on sample naming convention
+  condition <- ifelse(grepl("BLM", sample_name), "bleomycin", "vehicle")
+  day <- ifelse(grepl("d7", sample_name), "day7", "day21")
+  treatment_group <- case_when(
+    condition == "vehicle" ~ "Vehicle",
+    condition == "bleomycin" & day == "day7" ~ "Day 7 BLM",
+    condition == "bleomycin" & day == "day21" ~ "Day 21 BLM"
+  )
+  
+  # Skip if file doesn't exist
+  if (!file.exists(file_path)) next
+  
+  # Load Seurat object
+  object <- readRDS(file_path)
+  
+  # Define γδ T cell marker genes
+  # Cd3e: T cell marker (CD3 epsilon chain)
+  # Trdc: T cell receptor delta constant region
+  # Tcrg-C1, Tcrg-C2, Tcrg-C4: T cell receptor gamma constant regions
+  genes <- c("Cd3e", "Trdc", "Tcrg-C1", "Tcrg-C2", "Tcrg-C4")
+  available_genes <- genes[genes %in% rownames(object)]
+  
+  # Skip if essential Cd3e marker is missing
+  if (!"Cd3e" %in% available_genes) next
+  
+  # Extract expression data for available genes
+  expr_data <- FetchData(object, vars = available_genes)
+  total_spots <- nrow(expr_data)
+  
+  # Count positive spots for each individual gene
+  cd3e_positive <- ifelse("Cd3e" %in% available_genes, 
+                          sum(expr_data[["Cd3e"]] > 0, na.rm = TRUE), 0)
+  trdc_positive <- ifelse("Trdc" %in% available_genes, 
+                          sum(expr_data[["Trdc"]] > 0, na.rm = TRUE), 0)
+  tcrg_c1_positive <- ifelse("Tcrg-C1" %in% available_genes, 
+                             sum(expr_data[["Tcrg-C1"]] > 0, na.rm = TRUE), 0)
+  tcrg_c2_positive <- ifelse("Tcrg-C2" %in% available_genes, 
+                             sum(expr_data[["Tcrg-C2"]] > 0, na.rm = TRUE), 0)
+  tcrg_c4_positive <- ifelse("Tcrg-C4" %in% available_genes, 
+                             sum(expr_data[["Tcrg-C4"]] > 0, na.rm = TRUE), 0)
+  
+  # Define γδ T cells using the following criteria:
+  # 1. Cd3e+ (general T cell marker)
+  # 2. At least one γδ TCR marker positive (Trdc+ OR Tcrg-C1+ OR Tcrg-C2+ OR Tcrg-C4+)
+  cd3_positive <- expr_data[["Cd3e"]] > 0
+  
+  # Check for gamma-delta TCR markers
+  gd_markers <- c("Trdc", "Tcrg-C1", "Tcrg-C2", "Tcrg-C4")
+  available_gd_markers <- gd_markers[gd_markers %in% available_genes]
+  
+  # Logical OR across all available gamma-delta markers (spots positive for any γδ marker)
+  gd_marker_positive <- FALSE
+  for (marker in available_gd_markers) {
+    gd_marker_positive <- gd_marker_positive | (expr_data[[marker]] > 0)
+  }
+  
+  # γδ T cells = Cd3e+ AND (at least one γδ TCR marker+)
+  gamma_delta_T_cells <- sum(cd3_positive & gd_marker_positive, na.rm = TRUE)
+  
+  # Store results
+  results_df <- rbind(results_df, data.frame(
+    sample_name = sample_name,
+    treatment_group = treatment_group,
+    total_spots = total_spots,
+    cd3e_positive = cd3e_positive,
+    trdc_positive = trdc_positive,
+    tcrg_c1_positive = tcrg_c1_positive,
+    tcrg_c2_positive = tcrg_c2_positive,
+    tcrg_c4_positive = tcrg_c4_positive,
+    gamma_delta_T_cells = gamma_delta_T_cells,
+    stringsAsFactors = FALSE
+  ))
+}
+
+# Display quantification results
+print(results_df)
+```
+
+## Visualization of γδ T Cell Results
+
+```{r gamma-delta-visualization, fig.width=10, fig.height=6}
+# Create visualization
+# Set factor order for consistent plotting
+results_df$treatment_group <- factor(results_df$treatment_group, 
+                                     levels = c("Vehicle", "Day 7 BLM", "Day 21 BLM"))
+
+# Generate box plot with individual data points
+ggplot(results_df, aes(x = treatment_group, y = gamma_delta_T_cells, fill = treatment_group)) +
+  geom_boxplot(alpha = 0.7, outlier.shape = NA) +  # Box plot without outlier points
+  geom_jitter(width = 0.2, size = 2, alpha = 0.8) +  # Individual sample points
+  labs(title = "γδ T Cell Abundance by Treatment Group", 
+       x = "Treatment Group", 
+       y = "Number of γδ T Cells per Sample") +
+  theme_classic() +
+  theme(legend.position = "none",  # Remove legend as colors match x-axis labels
+        plot.title = element_text(hjust = 0.5, size = 14),
+        axis.text.x = element_text(size = 12),
+        axis.text.y = element_text(size = 12))
+```
+
+## Cytotoxic γδ T Cell Analysis
+
+```{r cytotoxic-analysis}
+# ============================================================================
+# CYTOTOXIC γδ T CELL ANALYSIS
+# Identify γδ T cells that express perforin-1 (Prf1), indicating cytotoxic potential
+# ============================================================================
+
+# Initialize results dataframe for cytotoxic γδ T cells
+cytotoxic_results_df <- data.frame(
+  sample_name = character(),
+  treatment_group = character(),
+  total_spots = integer(),
+  gamma_delta_T_cells = integer(),
+  prf1_positive = integer(),
+  cytotoxic_gamma_delta_T_cells = integer(),
+  stringsAsFactors = FALSE
+)
+
+# Process each sample for cytotoxic analysis
+for (i in seq_along(mouse_files)) {
+  file_path <- mouse_files[i]
+  
+  # Extract sample name from file path
+  sample_name <- gsub(".*/(d[0-9]+_[A-Za-z]+_[0-9]+_.*)\\.rds$", "\\1", file_path)
+  
+  # Assign treatment groups based on sample naming convention
+  condition <- ifelse(grepl("BLM", sample_name), "bleomycin", "vehicle")
+  day <- ifelse(grepl("d7", sample_name), "day7", "day21")
+  treatment_group <- case_when(
+    condition == "vehicle" ~ "Vehicle",
+    condition == "bleomycin" & day == "day7" ~ "Day 7 BLM",
+    condition == "bleomycin" & day == "day21" ~ "Day 21 BLM"
+  )
+  
+  # Skip if file doesn't exist
+  if (!file.exists(file_path)) next
+  
+  # Load Seurat object
+  object <- readRDS(file_path)
+  
+  # Define marker genes including perforin-1 for cytotoxic function
+  genes <- c("Cd3e", "Trdc", "Tcrg-C1", "Tcrg-C2", "Tcrg-C4", "Prf1")
+  available_genes <- genes[genes %in% rownames(object)]
+  
+  # Skip if essential markers are missing
+  if (!"Cd3e" %in% available_genes || !"Prf1" %in% available_genes) next
+  
+  # Extract expression data for available genes
+  expr_data <- FetchData(object, vars = available_genes)
+  total_spots <- nrow(expr_data)
+  
+  # Define γδ T cells (same criteria as before)
+  cd3_positive <- expr_data[["Cd3e"]] > 0
+  
+  # Check for gamma-delta TCR markers
+  gd_markers <- c("Trdc", "Tcrg-C1", "Tcrg-C2", "Tcrg-C4")
+  available_gd_markers <- gd_markers[gd_markers %in% available_genes]
+  
+  # Logical OR across all available gamma-delta markers
+  gd_marker_positive <- FALSE
+  for (marker in available_gd_markers) {
+    gd_marker_positive <- gd_marker_positive | (expr_data[[marker]] > 0)
+  }
+  
+  # γδ T cells = Cd3e+ AND (at least one γδ TCR marker+)
+  gamma_delta_positive <- cd3_positive & gd_marker_positive
+  gamma_delta_T_cells <- sum(gamma_delta_positive, na.rm = TRUE)
+  
+  # Count Prf1+ spots (cytotoxic potential)
+  prf1_positive <- sum(expr_data[["Prf1"]] > 0, na.rm = TRUE)
+  
+  # Define cytotoxic γδ T cells: γδ T cells that are also Prf1+
+  cytotoxic_gamma_delta_positive <- gamma_delta_positive & (expr_data[["Prf1"]] > 0)
+  cytotoxic_gamma_delta_T_cells <- sum(cytotoxic_gamma_delta_positive, na.rm = TRUE)
+  
+  # Store results
+  cytotoxic_results_df <- rbind(cytotoxic_results_df, data.frame(
+    sample_name = sample_name,
+    treatment_group = treatment_group,
+    total_spots = total_spots,
+    gamma_delta_T_cells = gamma_delta_T_cells,
+    prf1_positive = prf1_positive,
+    cytotoxic_gamma_delta_T_cells = cytotoxic_gamma_delta_T_cells,
+    stringsAsFactors = FALSE
+  ))
+}
+
+# Display cytotoxic quantification results
+print("Cytotoxic γδ T Cell Analysis Results:")
+print(cytotoxic_results_df)
+```
+
+## Visualization of Cytotoxic γδ T Cell Results
+
+```{r cytotoxic-visualization, fig.width=10, fig.height=6}
+# Create visualization for cytotoxic γδ T cells
+# Set factor order for consistent plotting
+cytotoxic_results_df$treatment_group <- factor(cytotoxic_results_df$treatment_group, 
+                                               levels = c("Vehicle", "Day 7 BLM", "Day 21 BLM"))
+
+# Generate box plot with individual data points for cytotoxic γδ T cells
+ggplot(cytotoxic_results_df, aes(x = treatment_group, y = cytotoxic_gamma_delta_T_cells, fill = treatment_group)) +
+  geom_boxplot(alpha = 0.7, outlier.shape = NA) +  # Box plot without outlier points
+  geom_jitter(width = 0.2, size = 2, alpha = 0.8) +  # Individual sample points
+  labs(title = "Cytotoxic γδ T Cell Abundance by Treatment Group", 
+       x = "Treatment Group", 
+       y = "Number of Cytotoxic γδ T Cells per Sample") +
+  theme_classic() +
+  theme(legend.position = "none",  # Remove legend as colors match x-axis labels
+        plot.title = element_text(hjust = 0.5, size = 14),
+        axis.text.x = element_text(size = 12),
+        axis.text.y = element_text(size = 12))
+```
