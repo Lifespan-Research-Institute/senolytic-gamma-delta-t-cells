@@ -1,0 +1,555 @@
+---
+title: "Phenotyping γδ T Cells in the Bleomycin-Induced Fibrosis Model"
+author: "Gabriel Meca Laguna"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    df_print: paged
+  pdf_document:
+    latex_engine: lualatex
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE)
+```
+
+
+# γδ T Cells Target Senescent Cells and Alleviate Pulmonary Fibrosis
+
+# Gabriel Meca-Laguna, Tesfahun Dessale Admasu, [...], Amit Sharma.
+
+
+
+ Data was re-analyzed from King et al., JCI Insight, 2024
+ Paper: Gpnmb and Spp1 mark a conserved macrophage injury response masking fibrosis-specific programming in the lung
+ PMID: 39509324
+
+
+ Link to access the data:
+ https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi 
+ GEO: GSE280003
+
+
+ Download:
+ Analysis of CD45+ sorted cells - Bleomycin time course study
+ Controls (D03), Day 7 (D07), and Day 14 (D14) post bleomycin treatment
+
+ Control samples (D00):
+ GSM8585421	Homeostasis, D00, CD45, rep1
+ GSM8585422	Homeostasis, D00, CD45, rep2
+ GSM8585423	Homeostasis, D00, CD45, rep3
+
+ Day 7 post bleomycin (D07):
+ GSM8585479	bleo, D07, CD45, rep1
+ GSM8585480	bleo, D07, CD45, rep2
+ GSM8585481	bleo, D07, CD45, rep3
+ 
+ Day 14 post bleomycin (D14):
+ GSM8585490	bleo, D14, CD45, rep1
+ GSM8585491	bleo, D14, CD45, rep2
+ GSM8585492	bleo, D14, CD45, rep3
+
+
+
+
+```{r}
+# Load required libraries
+
+library(Seurat)
+library(dplyr)
+library(ggplot2)
+library(biomaRt) 
+```
+
+
+
+
+
+
+```{r}
+# Data was pre-processed using Cellenics and a .rds file was generated
+
+# Load data
+
+seurat_obj <- readRDS("C:/Users/gabriel.mecalaguna/Downloads/Bleomycin_0_7_14_kinetics_processed_matrix.rds")
+```
+
+
+
+
+```{r}
+# Create custom cell sets and assign values directly
+
+seurat_obj$custom_cellset <- NA
+seurat_obj$custom_cellset[seurat_obj$`custom_cellset-Control` == TRUE & !is.na(seurat_obj$`custom_cellset-Control`)] <- "Control"
+seurat_obj$custom_cellset[seurat_obj$`custom_cellset-Day 7 BLM` == TRUE & !is.na(seurat_obj$`custom_cellset-Day 7 BLM`)] <- "Day 7 BLM"
+seurat_obj$custom_cellset[seurat_obj$`custom_cellset-Day 14 BLM` == TRUE & !is.na(seurat_obj$`custom_cellset-Day 14 BLM`)] <- "Day 14 BLM"
+```
+
+
+
+
+```{r}
+# Proper ordering
+
+seurat_obj$custom_cellset <- factor(seurat_obj$custom_cellset, 
+                                    levels = c("Control", "Day 7 BLM", "Day 14 BLM"))
+```
+
+
+
+```{r}
+# Define custom colors
+
+custom_colors <- c(
+  "Control" = "#1f77b4",     # Blue
+  "Day 7 BLM" = "#ff7f0e",   # Orange
+  "Day 14 BLM" = "#d62728"   # Red
+)
+
+```
+
+
+
+
+```{r}
+# Plot UMAP
+
+DimPlot(seurat_obj, reduction = "umap", group.by = "custom_cellset", 
+              pt.size = 0.1, label = FALSE, repel = TRUE,
+              cols = custom_colors) +
+  labs(title = NULL) +
+  theme(
+    axis.text = element_blank(),
+    axis.title = element_blank(),
+    axis.ticks = element_blank(),
+    axis.line = element_blank(),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.border = element_blank(),
+    panel.background = element_blank(), 
+    legend.position = "bottom",
+    legend.justification = "center"
+  )
+```
+```{r}
+DimPlot(seurat_obj, split.by = "custom_cellset", group.by = "custom_cellset") +
+  labs(title = NULL) +
+  theme(
+    axis.text = element_blank(),
+    axis.title = element_blank(),
+    axis.ticks = element_blank(),
+    axis.line = element_blank(),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.border = element_blank(),
+    panel.background = element_blank(), 
+    legend.position = "bottom",
+    legend.justification = "center"
+  )
+```
+
+
+Save 
+ggsave("UMAP_Custom_Cellset_Conditions.png", 
+       plot = p1,
+       width = 6, 
+       height = 5, 
+       dpi = 600, 
+       units = "in",
+       bg = "white")
+
+
+
+
+```{r}
+# Data pre-processed with Cellenics does not have gene names
+# Connect to BioMart (mouse data)
+mart <- useDataset("mmusculus_gene_ensembl", useMart("ensembl"))
+
+# Get gene name mapping
+gene_mapping <- getBM(
+  attributes = c("ensembl_gene_id", "external_gene_name"),
+  filters = "ensembl_gene_id",
+  values = rownames(seurat_obj),
+  mart = mart
+)
+
+# Create lookup table
+gene_lookup <- setNames(gene_mapping$external_gene_name, gene_mapping$ensembl_gene_id)
+
+# Create data frame with gene names
+gene_df <- data.frame(
+  ensembl_id = rownames(seurat_obj),
+  gene_name = gene_lookup[rownames(seurat_obj)]
+)
+
+# Replace NAs with original IDs and make names unique
+gene_df$gene_name[is.na(gene_df$gene_name) | gene_df$gene_name == ""] <- 
+  gene_df$ensembl_id[is.na(gene_df$gene_name) | gene_df$gene_name == ""]
+gene_df$gene_name <- make.unique(gene_df$gene_name)
+
+# Update gene names in the original object
+DefaultAssay(seurat_obj) <- "RNA"
+rownames(seurat_obj@assays$RNA@counts) <- gene_df$gene_name
+rownames(seurat_obj@assays$RNA@data) <- gene_df$gene_name
+
+if(!is.null(seurat_obj@assays$RNA@scale.data)) {
+  rownames(seurat_obj@assays$RNA@scale.data) <- gene_df$gene_name[
+    match(rownames(seurat_obj@assays$RNA@scale.data), gene_df$ensembl_id)
+  ]
+}
+rownames(seurat_obj@assays$RNA@meta.features) <- gene_df$gene_name
+```
+
+
+
+
+
+```{r}
+# Plot a feature to validate successful gene mapping (sanity check)
+FeaturePlot(seurat_obj, features = c("Cd3e"), pt.size = 0.1, cols = c("lightgrey", "red"))
+FeaturePlot(seurat_obj, features = c("Trdc"), pt.size = 0.1, cols = c("lightgrey", "red"))
+FeaturePlot(seurat_obj, features = c("Cd19"), pt.size = 0.1, cols = c("lightgrey", "red"))
+
+# Cd3e and Trdc (T Cell Receptor Delta Constant) genes are located in the same place
+# Cd3e is much more abundant than Trdc
+# Cd19 (B cells) do not cluster with T cells
+```
+
+
+
+
+
+
+
+
+```{r}
+# Recommended reading: 
+# See paper: "Single-cell RNA sequencing unveils the shared and the distinct cytotoxic hallmarks
+# of human TCR Vδ1 and TCR Vδ2 γδ T lymphocytes"
+# Pizzolato et al., 2019, PNAS 
+
+
+
+# In summary, in order to find gamma delta T cells a positive and negative filtering criteria needs to be used.
+# Filtering cells for Cd3e+ Trdc+ Cd8- Cd4- selects for gamma delta T cells with a 96% confidence interval (Figure 2D of their paper).
+
+
+
+# Find γδ T cells in our re-analyzed dataset 
+  
+  
+# Extract expression data
+
+expr_data <- FetchData(seurat_obj, vars = c("Cd3e","Cd3d", # T cell markers
+                                            "Trdc","Trgc1", "Trgc2",  "Trgc4", # γδ T cell constant chains
+                                            "Cd8a", # Exclude Cd8 T cells
+                                            "Ncr1", # Exclude NK cells
+                                            "Cd4", #Exclude Cd4 T cells
+                                            "Cd19",  #Exclude B cells
+                                            "Prf1" # Perforin 1 is used to define cytotoxic γδ T cells
+                                             ))
+```
+
+
+
+
+```{r}
+# Create γδ T cell classification
+# γδ T cells have been defined as cells expressing Cd3e or Cd3d and any of the γδ TCR constant chains
+# Additionally, other T cells, B cells, and NK cells are excluded from this analysis
+# Of note, different filtering criteria/thresholds have been tried
+# No matter the filtering criteria/thresholds the same results are observed:
+# 1) Increase in γδ T cell number, and 2) Increase in cytotoxic γδ T cells after bleomycin-injury
+
+seurat_obj$GD_T_cell <- ifelse(
+  (expr_data$Cd3e > 1 | expr_data$Cd3d > 1) 
+  & (expr_data$Trdc > 1 | expr_data$Trgc1 > 1 | expr_data$Trgc2 > 1 | expr_data$Trgc4 > 1) 
+  & expr_data$Cd19 < 0.5 & expr_data$Cd8a < 0.5 & expr_data$Cd4 < 0.5 & expr_data$Ncr1 < 0.5 
+  , 
+  "γδ T cells", 
+  "Other"
+)
+```
+
+
+
+  
+
+
+
+```{r}
+# Count γδ T cells by condition
+table(seurat_obj$GD_T_cell, seurat_obj$custom_cellset)
+```
+
+
+
+```{r}
+# Percentage changes across conditions
+prop.table(table(seurat_obj$GD_T_cell, seurat_obj$custom_cellset), 2) * 100
+```
+
+
+
+```{r}
+# Visualize on UMAP
+DimPlot(
+    seurat_obj,
+    group.by = "GD_T_cell",
+    cols = c("γδ T cells" = "blue", "Other" = "#E0E0E0"),
+    pt.size = 0.1,
+    order = "γδ T cells"  # Plot  γδ T cells on top
+  ) + labs(
+    title = "γδ T cells" ,
+    subtitle = "285 out of 30,407 cells" # γδ T cells = 75 + 107 + 103 = 285; out of 9252 + 11135 + 9735 = 30,122 + 285 γδ T cells = 30,407
+  )  + theme(plot.subtitle = element_text(hjust = 0.5),
+             legend.position = "bottom",
+             legend.justification = "center")
+```
+
+
+Save 
+ggsave("UMAP_GammaDelta_BLM.png", 
+       plot = p5,
+       width = 6, 
+       height = 5, 
+       dpi = 600, 
+       units = "in",
+       bg = "white")
+
+
+
+
+
+```{r}
+# Define cytotoxic γδ T cells (with Prf1)
+seurat_obj$GD_T_cell <- ifelse(
+  (expr_data$Cd3e > 1 | expr_data$Cd3d > 1) 
+  & (expr_data$Trdc > 1 | expr_data$Trgc1 > 1 | expr_data$Trgc2 > 1 | expr_data$Trgc4 > 1) 
+  & expr_data$Cd19 < 0.5 & expr_data$Cd8a < 0.5 & expr_data$Cd4 < 0.5 & expr_data$Ncr1 < 0.5 
+  & expr_data$Prf1 > 0
+  , 
+  "Cytotoxic γδ T cells", 
+  "Other"
+)
+```
+
+
+
+
+```{r}
+# Count cytotoxic γδ T cells by condition
+table(seurat_obj$GD_T_cell, seurat_obj$custom_cellset)
+```
+
+
+
+```{r}
+# Percentage changes across conditions
+prop.table(table(seurat_obj$GD_T_cell, seurat_obj$custom_cellset), 2) * 100
+```
+
+
+
+```{r}
+# Visualize cytotoxic γδ T cells on UMAP
+DimPlot(
+  seurat_obj,
+  group.by = "GD_T_cell",
+  cols = c("Cytotoxic γδ T cells" = "red", "Other" = "#E0E0E0"),
+  pt.size = 0.1,
+  order = "Cytotoxic γδ T cells"
+) + labs(
+  title = "Cytotoxic γδ T cells",
+) + theme(
+  plot.subtitle = element_text(hjust = 0.5),
+  legend.position = "bottom",
+  legend.justification = "center"
+)
+```
+
+
+
+
+Save
+ggsave("UMAP_Cytotoxic_GammaDelta_BLM.png", 
+       width = 6, 
+       height = 5, 
+       dpi = 600, 
+       units = "in",
+       bg = "white")
+
+
+
+
+
+
+
+
+```{r}
+# Compare gamma delta T cells with other immune cells
+
+# Extract expression data
+expr_data <- FetchData(seurat_obj, vars = c("Cd3e", "Cd3d", "Trdc", 
+                                            "Cd8a", "Ncr1", "Cd4", "Cd19", 
+                                            "Trgc1", "Trgc2", "Trgc4"))
+```
+
+
+
+
+```{r}
+# Define CD8+ T cells: CD3+ CD8+ CD4- NCR1- CD19- TRDC-
+
+seurat_obj$CD8_T_cell <- ifelse(
+  (expr_data$Cd3e > 1 | expr_data$Cd3d > 1) &
+    expr_data$Cd8a > 1 &
+    expr_data$Cd4 < 0.5 & expr_data$Ncr1 < 0.5 & expr_data$Cd19 < 0.5 &
+    expr_data$Trdc < 0.5 & expr_data$Trgc1 < 0.5 & expr_data$Trgc2 < 0.5 & expr_data$Trgc4 < 0.5,
+  "CD8+ T cells",
+  "Other"
+)
+```
+
+
+
+
+
+```{r}
+# Define CD4+ T cells: CD3+ CD4+ CD8- NCR1- CD19- TRDC-
+seurat_obj$CD4_T_cell <- ifelse(
+  (expr_data$Cd3e > 1 | expr_data$Cd3d > 1) &
+    expr_data$Cd4 > 1 &
+    expr_data$Cd8a < 0.5 & expr_data$Ncr1 < 0.5 & expr_data$Cd19 < 0.5 &
+    expr_data$Trdc < 0.5 & expr_data$Trgc1 < 0.5 & expr_data$Trgc2 < 0.5 & expr_data$Trgc4 < 0.5,
+  "CD4+ T cells",
+  "Other"  
+)
+```
+
+
+```{r}
+# Define NK cells: NCR1+ CD3- CD19-
+seurat_obj$NK_cell <- ifelse(
+  expr_data$Ncr1 > 1 &
+    expr_data$Cd3e < 0.5 & expr_data$Cd3d < 0.5 & expr_data$Cd19 < 0.5,
+  "NK cells",
+  "Other"
+)
+```
+
+
+
+
+
+```{r}
+# Count cells by condition
+print("=== CD8+ T CELLS ===")
+table(seurat_obj$CD8_T_cell, seurat_obj$custom_cellset)
+prop.table(table(seurat_obj$CD8_T_cell, seurat_obj$custom_cellset), 2) * 100
+
+print("=== CD4+ T CELLS ===")
+table(seurat_obj$CD4_T_cell, seurat_obj$custom_cellset)
+prop.table(table(seurat_obj$CD4_T_cell, seurat_obj$custom_cellset), 2) * 100
+
+print("=== NK CELLS ===")
+table(seurat_obj$NK_cell, seurat_obj$custom_cellset)
+prop.table(table(seurat_obj$NK_cell, seurat_obj$custom_cellset), 2) * 100
+
+```
+
+
+
+```{r}
+# Now let's see how many cells are Prf1+ / Cytotoxic
+
+# Get Prf1 expression data
+prf1_data <- FetchData(seurat_obj, vars = "Prf1")
+```
+
+
+
+
+
+```{r}
+# Calculate cytotoxic percentages by condition
+calculate_cytotoxic_percentage <- function(cell_type_column, cell_type_name) {
+  percentages <- c()
+  conditions <- c("Control", "Day 7 BLM", "Day 14 BLM")
+  
+  for(condition in conditions) {
+    total_cells <- sum(cell_type_column == cell_type_name & seurat_obj$custom_cellset == condition)
+    cytotoxic_cells <- sum(cell_type_column == cell_type_name & 
+                             seurat_obj$custom_cellset == condition & 
+                             prf1_data$Prf1 > 0)
+    percentage <- ifelse(total_cells > 0, (cytotoxic_cells / total_cells) * 100, 0)
+    percentages <- c(percentages, percentage)
+  }
+  return(percentages)
+}
+```
+
+
+
+
+
+
+
+```{r}
+# Create summary data frame
+cytotoxic_percentages <- data.frame(
+  Condition = factor(rep(c("Control", "Day 7 BLM", "Day 14 BLM"), 3),
+                     levels = c("Control", "Day 7 BLM", "Day 14 BLM")),
+  Cell_Type = factor(rep(c("CD4+ T cells", "CD8+ T cells", "NK cells"), each = 3),
+                     levels = c("CD4+ T cells", "CD8+ T cells", "NK cells")),
+  Percentage = c(
+    calculate_cytotoxic_percentage(seurat_obj$CD4_T_cell, "CD4+ T cells"),
+    calculate_cytotoxic_percentage(seurat_obj$CD8_T_cell, "CD8+ T cells"),
+    calculate_cytotoxic_percentage(seurat_obj$NK_cell, "NK cells")
+  )
+)
+
+```
+
+
+
+```{r}
+# Plot cytotoxic cell percentages
+p1_percentages <- ggplot(cytotoxic_percentages, aes(x = Condition, y = Percentage, fill = Cell_Type)) +
+  geom_col(position = "dodge", width = 0.7, color = "black") +
+  geom_text(aes(label = paste0(round(Percentage, 1), "%")), 
+            position = position_dodge(width = 0.7), 
+            vjust = -0.3, size = 3) +
+  labs(
+    title = "",
+    x = "Treatment Condition",
+    y = "Perforin-1 (%)",
+    fill = "Cell Type"
+  ) +
+  scale_fill_manual(values = c("CD4+ T cells" = "#4CAF50",
+                               "CD8+ T cells" = "#2196F3", 
+                               "NK cells" = "#9C27B0")) +
+  guides(fill = guide_legend(override.aes = list(color = "black"))) +
+  theme_classic() +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 14, face = "bold"),
+    legend.position = "bottom"
+  )
+
+print(p1_percentages)
+```
+
+
+
+
+
+
+  
+  
+  
+
+
+
+

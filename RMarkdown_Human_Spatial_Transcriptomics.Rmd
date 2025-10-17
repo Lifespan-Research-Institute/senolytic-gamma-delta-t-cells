@@ -1,0 +1,283 @@
+---
+title: "γδ T Cells Target Senescent Cells and Alleviate Pulmonary Fibrosis"
+author: "Gabriel Meca-Laguna, Tesfahun Dessale Admasu, [...], Amit Sharma"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+## Data Information
+
+**Link to access the spatial transcriptomics data:**  
+https://www.ebi.ac.uk/biostudies/studies/S-BSST1410  
+**Download:** hs_visium_spaceranger_output.zip
+
+Data was re-analyzed from Franzén et al., 2024 (PMID: 38951642).  
+- **IPF** = Freshly frozen human IPF lung tissue collected during transplantation with severe tissue remodeling.  
+- **Control** = Healthy control lung tissue (no known lung disease) collected postmortem.  
+- No tissue remodeling was observed in the healthy controls (PMID: 38951642).  
+
+**The samples analyzed are:**  
+- Control (Donor 1): HC_1.B0.1(V19S23-092-A1)  
+- IPF (Donor 1): IPF_1.B3.1(V19S23-092-D1)  
+
+## Load Libraries
+
+```{r setup, message=FALSE, warning=FALSE}
+# 1. Load only necessary libraries
+library(Seurat)
+library(harmony)
+library(ggplot2)
+library(patchwork)
+library(dplyr)
+library(SeuratData)
+library(hdf5r)
+library(cowplot)
+library(glmGamPoi)
+library(utf8)
+```
+
+## Load Data
+
+```{r load-data}
+# 2. Load your data
+merged <- readRDS("C:/Users/gabriel.mecalaguna/Documents/HUMAN_IPF_CONTROL_merged_harmony.rds")
+```
+
+## UMAP and Frequency Plots
+
+```{r umap-plots, fig.width=12, fig.height=6}
+# UMAP
+DimPlot(merged, group.by = "orig.ident", split.by = "orig.ident", cols = c("Control" = "#4285F4", "IPF" = "#EA4335")) +
+  ggtitle("Human IPF") +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+```{r frequency-plot}
+# Frequency plot  
+ggplot(merged@meta.data, aes(x = seurat_clusters, fill = orig.ident)) +
+  geom_bar(position = "fill") +
+  scale_fill_manual(values = c("Control" = "#4285F4", "IPF" = "#EA4335")) +
+  scale_y_continuous(labels = scales::percent) +
+  labs(title = "Cluster Distribution by Sample", x = "Clusters", y = "Percentage", fill = "Sample Type") +
+  theme_classic() +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+## Plot Genes of Interest
+
+```{r gene-plots}
+# 3. Plot genes of interest 
+SpatialFeaturePlot(merged, features = "COL1A1", images = c("Control", "IPF"), pt.size = 2.5)
+```
+
+## Define γδ T Cells
+
+```{r define-gamma-delta}
+# 4. Define γδ T cells 
+
+# Spots defined as CD3E+ AND TRDC+ OR TRGC1+ OR TRGC2+ have been defined as γδ T cells
+
+expr_data <- FetchData(
+  object = merged,
+  vars = c("CD3E", "TRGC2", "TRDC", "TRGC1")
+)
+
+gamma_delta_bool <- (
+  expr_data$CD3E > 0 & (expr_data$TRDC > 0 | expr_data$TRGC1 > 0 | expr_data$TRGC2 > 0)
+)
+
+#images = c("Control", "IPF")
+
+merged[["γδ T cells"]] <- ifelse(gamma_delta_bool, "γδ T cells", "Other")
+
+SpatialPlot(
+  object = merged,
+  group.by = "γδ T cells",
+  images =  "IPF", #images = c("Control", "IPF")
+  pt.size.factor = 2.5,
+  cols = c("γδ T cells" = "red", "Other" = "#E0E0E0"),
+  alpha = c("γδ T cells" = 0.7)
+) + NoLegend()
+```
+
+## Define Cytotoxic γδ T Cells
+
+```{r define-cytotoxic-gamma-delta}
+# 5. Define cytotoxic γδ T cells 
+
+# Spots defined as PRF1+ AND CD3E+ AND TRDC+ OR TRGC1+ OR TRGC2+ have been defined as cytotoxic γδ T cells
+
+expr_data <- FetchData(
+  object = merged,
+  vars = c("CD3E", "TRGC2", "TRDC", "TRGC1", "PRF1")
+)
+
+gamma_delta_bool <- (
+  expr_data$CD3E > 0 & (expr_data$TRDC > 0 | expr_data$TRGC1 > 0 | expr_data$TRGC2 > 0) & expr_data$PRF1 >0
+)
+
+#images = c("Control", "IPF")
+
+merged[["Cytotoxic γδ T cells"]] <- ifelse(gamma_delta_bool, "Cytotoxic γδ T cells", "Other")
+
+SpatialPlot(
+  object = merged,
+  group.by = "Cytotoxic γδ T cells",
+  images =  "IPF", #images = c("Control", "IPF")
+  pt.size.factor = 2.5,
+  cols = c("Cytotoxic γδ T cells" = "red", "Other" = "#E0E0E0"),
+  alpha = c("Cytotoxic γδ T cells" = 0.7)
+) + NoLegend()
+```
+
+## Define Senolytic γδ T Cells
+
+```{r senescence-markers}
+# 6. Define senolytic γδ T cells 
+
+# Spots defined as PRF1+ AND CDKN1A-high AND CDKN2A-high AND CD3E+ AND TRDC+ OR TRGC1+ OR TRGC2+ have been defined as cytotoxic γδ T cells
+
+SpatialFeaturePlot(merged, features = "CDKN1A", images = c("Control", "IPF"), pt.size = 2.5)
+SpatialFeaturePlot(merged, features = "CDKN2A", images = c("Control", "IPF"), pt.size = 2.5)
+```
+
+```{r define-senolytic-gamma-delta}
+# CDKN1A and CDKN2A have different expression patterns
+
+# We want to eliminate low-expressing spots
+
+# We will use expr_data$CDKN1A > 1 & expr_data$CDKN2A > 0.5 to increase the confidence that a certain spot has a senescent cell
+
+expr_data <- FetchData(
+  object = merged,
+  vars = c("CD3E", "TRGC2", "TRDC", "TRGC1", "CDKN1A", "PRF1", "CDKN2A")
+)
+
+gamma_delta_bool <- (
+  expr_data$CD3E > 0 & (expr_data$TRDC > 0 | expr_data$TRGC1 > 0 | expr_data$TRGC2 > 0) & expr_data$PRF1 > 0
+  & expr_data$CDKN1A > 1 & expr_data$CDKN2A > 0.5
+)
+
+
+merged[["Senolytic γδ T cells"]] <- ifelse(gamma_delta_bool, "Senolytic γδ T cells", "Other")
+
+SpatialPlot(
+  object = merged,
+  group.by = "Senolytic γδ T cells",
+  images =  "IPF",
+  pt.size.factor = 2.5,
+  cols = c("Senolytic γδ T cells" = "red", "Other" = "#E0E0E0"),
+  alpha = c("Senolytic γδ T cells" = 0.7)
+) + NoLegend()
+
+# There are two spots were cytotoxic γδ T cells are in the same spot as a high-confidence senescent cell
+
+# Thus, "Senolytic γδ T cells" according to this filtering criteria
+```
+
+## Define Senolytic Epithelial Transitional γδ T Cells
+
+```{r epithelial-markers}
+# 7. Define senolytic epithelial transitional γδ T cells
+
+SpatialFeaturePlot(merged, features = "KRT8", images = c("Control", "IPF"), pt.size = 2.5)
+```
+
+```{r define-senolytic-epithelial}
+# Spots defined as PRF1+ AND KRT8+ AND CD3E+ AND TRDC+ OR TRGC1+ OR TRGC2+ have been defined as senolytic epithelial transitional γδ T cells
+
+expr_data <- FetchData(
+  object = merged,
+  vars = c("CD3E", "TRGC2", "TRDC", "TRGC1", "PRF1", "KRT8")
+)
+
+gamma_delta_bool <- (
+  expr_data$CD3E > 0 & (expr_data$TRDC > 0 | expr_data$TRGC1 > 0 | expr_data$TRGC2 > 0) & expr_data$PRF1 > 0
+  & expr_data$KRT8 > 1
+)
+
+merged[["Senolytic epithelial transitional γδ T cells"]] <- ifelse(gamma_delta_bool, "Senolytic epithelial transitional γδ T cells", "Other")
+
+SpatialPlot(
+  object = merged,
+  group.by = "Senolytic epithelial transitional γδ T cells",
+  images =  "IPF",
+  pt.size.factor = 2.5,
+  cols = c("Senolytic epithelial transitional γδ T cells" = "red", "Other" = "#E0E0E0"),
+  alpha = c("Senolytic epithelial transitional γδ T cells" = 0.7)
+) + NoLegend()
+```
+
+## MAYO Senescence Signature Analysis
+
+```{r mayo-signature, message=FALSE, warning=FALSE}
+# Get SEN MAYO Senescence signature from msigdbr
+
+library(msigdbr)
+
+sen_mayo_geneset <- msigdbr(
+  species = "Homo sapiens",
+  category = "C2"
+)
+
+sen_mayo_geneset <- sen_mayo_geneset %>%
+  filter(gs_name == "SAUL_SEN_MAYO")
+mayo_senescence_genes <- sen_mayo_geneset$gene_symbol
+genes_in_seurat <- mayo_senescence_genes[mayo_senescence_genes %in% rownames(merged)]
+
+
+# Add module score for senescence signature
+merged <- AddModuleScore(
+  object = merged,
+  features = list(genes_in_seurat),
+  name = "MAYO_Senescence_Signature",
+  ctrl = 100
+)
+```
+
+```{r mayo-spatial-plots}
+# Spatial feature plot - IPF
+SpatialFeaturePlot(merged,
+                   features = "MAYO_Senescence_Signature1",
+                   images =  "IPF",
+                   pt.size = 2.5) + NoLegend()
+
+# Spatial feature plot - Control
+SpatialFeaturePlot(merged,
+                   features = "MAYO_Senescence_Signature1",
+                   images =  "Control",
+                   pt.size = 2.5) + NoLegend()
+```
+
+## Gamma Delta T Cell Ligands Signature
+
+```{r gamma-delta-ligands}
+# Gamma delta T cell ligands signature
+
+gamma_delta_ligands <- list(c("ICAM1", "MICA", "BTN3A1", "PVR"))
+
+merged <- AddModuleScore(
+  object   = merged,
+  features = gamma_delta_ligands, # list of gene sets
+  name     = "gamma_delta_ligands",
+  ctrl = 100
+)
+```
+
+```{r ligands-spatial-plots}
+# Spatial feature plot - IPF
+
+SpatialFeaturePlot(merged,
+                   features = "gamma_delta_ligands1",
+                   images = "IPF",
+                   pt.size = 2.5
+) + NoLegend()
+
+# Spatial feature plot - Control
+
+SpatialFeaturePlot(merged,
+                   features = "gamma_delta_ligands1",
+                   images = "Control",
+                   pt.size = 2.5
+) + NoLegend()
+```

@@ -1,0 +1,765 @@
+
+# γδ T Cells Target Senescent Cells and Alleviate Pulmonary Fibrosis
+
+# Gabriel Meca-Laguna, Tesfahun Dessale Admasu, [...], Amit Sharma.
+
+
+
+# Single-nucleus RNA-seq Analysis: NS vs SEN IMR-90
+# NS IMR-90 fibroblasts vs SEN (Senescent) IMR-90 fibroblasts (Doxorubicin-treated, 300 nM, 24 hours)
+# SEN cells were collected 10 days after doxorubicin insult
+
+# Setup and data loading
+
+```{r setup, message=FALSE, warning=FALSE}
+#Load libraries 
+
+library(Seurat)
+library(ggplot2)
+library(dplyr)
+library(patchwork)
+library(tidyr)
+library(biomaRt)
+library(msigdbr)
+
+# Data was pre-processed in Cellenics to eliminate low quality cells, mitochondrial reads and doublets 
+
+seurat_obj <- readRDS("C:/Users/gabriel.mecalaguna/Downloads/snRNAseq_NS_vs_SEN_IMR_90.rds")
+print(seurat_obj)
+print(colnames(seurat_obj@meta.data))
+```
+
+# Gene Symbol Mapping
+
+```{r gene_mapping, message=FALSE, warning=FALSE}
+# Cellenics .rds files do not have genes
+
+# Use Ensembl 
+ensembl <- useEnsembl(biomart = "genes", 
+                      dataset = "hsapiens_gene_ensembl",
+                      mirror = "useast")
+
+current_gene_ids <- rownames(seurat_obj)
+gene_mapping <- getBM(
+  attributes = c("ensembl_gene_id", "external_gene_name"),
+  filters = "ensembl_gene_id",
+  values = current_gene_ids,
+  mart = ensembl
+)
+
+complete_mapping <- data.frame(ensembl_gene_id = current_gene_ids, stringsAsFactors = FALSE)
+complete_mapping <- merge(complete_mapping, gene_mapping, by = "ensembl_gene_id", all.x = TRUE)
+
+complete_mapping$final_symbol <- ifelse(
+  is.na(complete_mapping$external_gene_name) | complete_mapping$external_gene_name == "",
+  complete_mapping$ensembl_gene_id,
+  complete_mapping$external_gene_name
+)
+
+complete_mapping$final_symbol <- make.unique(complete_mapping$final_symbol)
+complete_mapping <- complete_mapping[match(current_gene_ids, complete_mapping$ensembl_gene_id), ]
+
+new_symbols <- complete_mapping$final_symbol
+
+rownames(seurat_obj@assays$RNA@counts) <- new_symbols
+rownames(seurat_obj@assays$RNA@data) <- new_symbols
+
+if (nrow(seurat_obj@assays$RNA@scale.data) > 0) {
+  scale_genes <- rownames(seurat_obj@assays$RNA@scale.data)
+  scale_indices <- match(scale_genes, current_gene_ids)
+  rownames(seurat_obj@assays$RNA@scale.data) <- new_symbols[scale_indices]
+}
+
+if (!is.null(seurat_obj@assays$RNA@meta.features)) {
+  rownames(seurat_obj@assays$RNA@meta.features) <- new_symbols
+}
+```
+
+# UMAP Visualization
+
+```{r umap_setup}
+# Adjust colors
+dot_size <- 1       
+alpha_value <- 1    
+custom_colors <- c("NS" = "#4285F4", "SEN" = "#EA4335")
+```
+
+```{r umap_samples}
+# UMAP
+
+p <- DimPlot(seurat_obj, 
+             reduction = "umap", 
+             group.by = "samples", 
+             label = FALSE,
+             pt.size = dot_size,        
+             alpha = alpha_value) +     
+  ggtitle("") +
+  scale_color_manual(values = custom_colors) +  
+  theme_classic() +                     
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 12, face = "bold"),
+    legend.text = element_text(size = 12),
+    legend.position = "none"
+  )
+print(p)
+```
+
+ggsave("umap_NS_vs_SEN.png", 
+       plot = p,
+       width = 6, 
+       height = 5, 
+       dpi = 600, 
+       units = "in",
+
+
+
+
+
+# Individual Gene Expression
+
+```{r individual_genes}
+# Check for CDKN1A expression; a putative marker of senescence
+
+p_cdkn1a <- FeaturePlot(seurat_obj, features = "CDKN1A", reduction = "umap", pt.size = dot_size, alpha = alpha_value) +
+  ggtitle("CDKN1A") +
+  scale_color_gradient(low = "grey90", high = "purple", name = "Expression") +
+  theme_classic() +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 12, face = "bold"),
+    legend.text = element_text(size = 12)
+  )
+print(p_cdkn1a)
+```
+
+ggsave("umap_cdkn1a.png", 
+       plot = p_cdkn1a,
+       width = 6, 
+       height = 5, 
+       dpi = 600, 
+       units = "in",
+       bg = "white")
+
+
+
+```{r top2a_gene}
+# Check for TOP2A; a negative marker of senescence
+
+p_top2a <- FeaturePlot(seurat_obj, features = "HMGB2", reduction = "umap", pt.size = dot_size, alpha = alpha_value) +
+  ggtitle("TOP2A") +
+  scale_color_gradient(low = "grey90", high = "purple", name = "Expression") +
+  theme_classic() +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 12, face = "bold"),
+    legend.text = element_text(size = 12)
+  )
+print(p_top2a)
+```
+
+
+ggsave("umap_topo2a.png", 
+       plot = p_top2a,
+       width = 6, 
+       height = 5, 
+       dpi = 600, 
+       units = "in",
+       bg = "white")
+
+
+
+# Boxplot Analysis
+
+```{r boxplot_basic}
+# Sanity check for CDKN1A and TOP2A
+
+plot_data <- data.frame(
+  TOP2A = seurat_obj@assays$RNA@data["TOP2A", ],
+  CDKN1A = seurat_obj@assays$RNA@data["CDKN1A", ],
+  group = seurat_obj@meta.data$samples
+)
+
+plot_data_long <- plot_data %>%
+  pivot_longer(cols = c(TOP2A, CDKN1A), 
+               names_to = "gene", 
+               values_to = "expression")
+
+# Ensure gene order is TOP2A first, then CDKN1A
+plot_data_long$gene <- factor(plot_data_long$gene, levels = c("TOP2A", "CDKN1A"))
+
+p_boxplot <- ggplot(plot_data_long, aes(x = group, y = expression, fill = group)) +
+  geom_boxplot(alpha = 1, outlier.shape = NA) +
+  scale_fill_manual(values = c("NS" = "#4285F4", "SEN" = "#EA4335")) +
+  facet_wrap(~gene, scales = "free_y") +
+  ggtitle(" ") +
+  labs(fill = "Samples", y = "Expression", x = "Samples") +
+  theme_classic() +
+  theme(
+    plot.title = element_text(hjust = 0.5),
+    strip.background = element_rect(fill = "white", color = "black", size = 0.5),
+    strip.text = element_text(size = 12),
+    panel.border = element_rect(color = "black", fill = NA, size = 0.5)
+  )
+
+print(p_boxplot)
+```
+
+
+
+
+
+
+
+ggsave("Box_Plot_Markers.pdf", # Changed extension to .pdf
+       plot = p_boxplot_six,
+       width = 6, 
+       height = 5, 
+       units = "in",
+       bg = "white")
+
+
+
+
+
+
+
+
+# MHC Class I Genes
+
+
+
+```{r}
+# NLRC5 is a transcription factor of BTN3A1
+# Additionally, check for downstream targets of NLRC5
+
+plot_data_three <- data.frame(
+  NLRC5 = seurat_obj@assays$RNA@data["NLRC5", ],
+  TAP1 = seurat_obj@assays$RNA@data["TAP1", ],
+  B2M = seurat_obj@assays$RNA@data["B2M", ],
+  group = seurat_obj@meta.data$samples
+)
+
+plot_data_three_long <- plot_data_three %>%
+  pivot_longer(cols = c(NLRC5, TAP1, B2M), 
+               names_to = "gene", 
+               values_to = "expression")
+
+# Ensure gene order is NLRC5, TAP1, B2M
+plot_data_three_long$gene <- factor(plot_data_three_long$gene, levels = c("NLRC5", "TAP1", "B2M"))
+
+# Plot only those cells which are expressing the genes 
+# In single nuclei RNA seq. genes may not be captured to the limitation of the technology
+
+expressing_cells_three <- plot_data_three_long[plot_data_three_long$expression > 0, ]
+
+p_expressing_three <- ggplot(expressing_cells_three, aes(x = group, y = expression, fill = group)) +
+  geom_violin(alpha = 0.8) +
+  geom_boxplot(width = 0.1, fill = "white", alpha = 0.8, outlier.shape = NA) +
+  scale_fill_manual(values = c("NS" = "#4285F4", "SEN" = "#EA4335")) +
+  facet_wrap(~gene, scales = "free_y") +
+  ggtitle("") +
+  labs(y = "Expression Level", x = "Samples") +
+  theme_classic() +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 12, face = "bold"),
+    strip.background = element_rect(fill = "white", color = "black", size = 0.5),
+    strip.text = element_text(size = 12),
+    panel.border = element_rect(color = "black", fill = NA, size = 0.5),
+    legend.position = "none"
+  )
+
+print(p_expressing_three)
+```
+
+```{r}
+# NLRC5 plus other downstream targets which are also ligands of gamma delta T cells
+
+plot_data_six <- data.frame(
+  NLRC5 = seurat_obj@assays$RNA@data["NLRC5", ],
+  TAP1 = seurat_obj@assays$RNA@data["TAP1", ],
+  B2M = seurat_obj@assays$RNA@data["B2M", ],
+  BTN2A1 = seurat_obj@assays$RNA@data["BTN2A1", ],
+  BTN2A2 = seurat_obj@assays$RNA@data["BTN2A2", ],
+  BTN3A2 = seurat_obj@assays$RNA@data["BTN3A2", ],
+  group = seurat_obj@meta.data$samples
+)
+
+plot_data_six_long <- plot_data_six %>%
+  pivot_longer(cols = c(NLRC5, TAP1, B2M, BTN2A1, BTN2A2, BTN3A2), 
+               names_to = "gene", 
+               values_to = "expression")
+
+# Ensure gene order 
+plot_data_six_long$gene <- factor(plot_data_six_long$gene, 
+                                  levels = c("NLRC5", "TAP1", "B2M", "BTN2A1", "BTN2A2", "BTN3A2"))
+
+expressing_cells_six <- plot_data_six_long[plot_data_six_long$expression > 0, ]
+
+p_expressing_six <- ggplot(expressing_cells_six, aes(x = group, y = expression, fill = group)) +
+  geom_violin(alpha = 0.8) +
+  geom_boxplot(width = 0.1, fill = "white", alpha = 0.8, outlier.shape = NA) +
+  scale_fill_manual(values = c("NS" = "#4285F4", "SEN" = "#EA4335")) +
+  facet_wrap(~gene, scales = "free_y") +
+  ggtitle("") +
+  labs(y = "Expression Level", x = "Samples") +
+  theme_classic() +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 12, face = "bold"),
+    strip.background = element_rect(fill = "white", color = "black", size = 0.5),
+    strip.text = element_text(size = 12),
+    panel.border = element_rect(color = "black", fill = NA, size = 0.5),
+    legend.position = "none"
+  )
+
+print(p_expressing_six)
+```
+
+
+
+ggsave("Box_Plot_SIX_NLRC5_Markers.pdf", 
+       plot = p_expressing_six,
+       width = 5, 
+       height = 4, 
+       units = "in",
+       bg = "white")
+
+
+
+
+
+# Interferon Signaling
+
+```{r interferon_signaling}
+
+# According to Murad Mamedov et al., 2023 the following genes are key for gamma delta T cells to recognize and kill targets cells
+
+plot_data_ifn <- data.frame(
+  IRF1 = seurat_obj@assays$RNA@data["IRF1", ],
+  JAK1 = seurat_obj@assays$RNA@data["JAK1", ],
+  STAT1 = seurat_obj@assays$RNA@data["STAT1", ],
+  group = seurat_obj@meta.data$samples
+)
+
+plot_data_ifn_long <- plot_data_ifn %>%
+  pivot_longer(cols = c(IRF1, JAK1, STAT1), 
+               names_to = "gene", 
+               values_to = "expression")
+
+plot_data_ifn_long$gene <- factor(plot_data_ifn_long$gene, 
+                                  levels = c("IRF1", "JAK1", "STAT1"))
+
+expressing_cells_ifn <- plot_data_ifn_long[plot_data_ifn_long$expression > 0, ]
+
+p_expressing_ifn <- ggplot(expressing_cells_ifn, aes(x = group, y = expression, fill = group)) +
+  geom_violin(alpha = 0.8) +
+  geom_boxplot(width = 0.1, fill = "white", alpha = 0.8, outlier.shape = NA) +
+  scale_fill_manual(values = c("NS" = "#4285F4", "SEN" = "#EA4335")) +
+  facet_wrap(~gene, scales = "free_y", ncol = 3) +
+  ggtitle("") +
+  labs(y = "Expression Level", x = "Samples") +
+  theme_classic() +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 12, face = "bold"),
+    strip.background = element_rect(fill = "white", color = "black", size = 0.5),
+    strip.text = element_text(size = 12),
+    panel.border = element_rect(color = "black", fill = NA, size = 0.5),
+    legend.position = "none"
+  )
+print(p_expressing_ifn)
+```
+
+ggsave("p_expressing_ifn.pdf", 
+       plot = p_expressing_ifn,
+       width = 5, 
+       height = 4, 
+       units = "in",
+       bg = "white")
+
+
+# Gamma-Delta T Cell Ligand Signature
+
+```{r gamma_delta_signature}
+# Create a signature of gamma delta T cell ligands
+
+gamma_delta_ligands <- c("BTN3A1", "ICAM1", "PVR", "MICA")
+
+seurat_obj <- AddModuleScore(
+  object = seurat_obj,
+  features = list(gamma_delta_ligands),
+  name = "Gamma_Delta_T_Cell_Ligands"
+)
+
+seurat_obj$Gamma_Delta_Normalized <- (seurat_obj$Gamma_Delta_T_Cell_Ligands1 - min(seurat_obj$Gamma_Delta_T_Cell_Ligands1)) / 
+  (max(seurat_obj$Gamma_Delta_T_Cell_Ligands1) - min(seurat_obj$Gamma_Delta_T_Cell_Ligands1))
+
+
+
+p_gd2 <- FeaturePlot(seurat_obj, features = "Gamma_Delta_T_Cell_Ligands1", reduction = "umap", 
+                     pt.size = dot_size, alpha = alpha_value) +
+  ggtitle("γδ T Cell Ligands Signature") +
+  scale_color_gradient(low = "white", high = "purple", name = "Expression") +
+  theme_classic() +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 12, face = "bold"),
+    legend.text = element_text(size = 12)
+  )
+print(p_gd2)
+```
+
+
+```{r gamma_delta_signature2}
+p_gd_box <- ggplot(seurat_obj@meta.data, aes(x = samples, y = Gamma_Delta_Normalized, fill = samples)) +
+  geom_boxplot(alpha = 1, outlier.shape = NA) +
+  scale_fill_manual(values = c("NS" = "#4285F4", "SEN" = "#EA4335")) +
+  ggtitle("γδ T Cell Ligands Signature") +
+  labs(fill = "Samples", y = "Normalized Expression", x = "Samples") +
+  theme_classic() +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 12, face = "bold"),
+    legend.text = element_text(size = 12)
+  )
+print(p_gd_box)
+```
+
+
+It appears that senescent cells have higher expression of gamma delta T cell ligands
+
+
+# Immune Recognition Genes
+
+```{r immune_recognition}
+
+# Expression of these genes
+
+plot_data_four <- data.frame(
+  BTN3A1 = seurat_obj@assays$RNA@data["BTN3A1", ],
+  ICAM1 = seurat_obj@assays$RNA@data["ICAM1", ],
+  MICA = seurat_obj@assays$RNA@data["MICA", ],
+  PVR = seurat_obj@assays$RNA@data["PVR", ],
+  group = seurat_obj@meta.data$samples
+)
+
+plot_data_four_long <- plot_data_four %>%
+  pivot_longer(cols = c(BTN3A1, ICAM1, MICA, PVR), 
+               names_to = "gene", 
+               values_to = "expression")
+
+plot_data_four_long$gene <- factor(plot_data_four_long$gene, 
+                                   levels = c("BTN3A1", "ICAM1", "MICA", "PVR"))
+
+expressing_cells_four <- plot_data_four_long[plot_data_four_long$expression > 0, ]
+
+p_expressing_four <- ggplot(expressing_cells_four, aes(x = group, y = expression, fill = group)) +
+  geom_violin(alpha = 0.8) +
+  geom_boxplot(width = 0.1, fill = "white", alpha = 0.8, outlier.shape = NA) +
+  scale_fill_manual(values = c("NS" = "#4285F4", "SEN" = "#EA4335")) +
+  facet_wrap(~gene, scales = "free_y", ncol = 2) +
+  ggtitle("") +
+  labs(y = "Expression Level", x = "Samples") +
+  theme_classic() +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 12, face = "bold"),
+    strip.background = element_rect(fill = "white", color = "black", size = 0.5),
+    strip.text = element_text(size = 12),
+    panel.border = element_rect(color = "black", fill = NA, size = 0.5),
+    legend.position = "none"
+  )
+print(p_expressing_four)
+```
+
+
+
+ggsave("Box_Plot_FOUR_Markers.pdf", # Changed extension to .pdf
+       plot = p_expressing_four,
+       width = 6, 
+       height = 5, 
+       units = "in",
+       bg = "white")
+
+
+
+
+# Proliferation and Senescence Signatures
+
+```{r prolif_sen_signatures}
+
+# As a sanity check, create a positive and negative signature with senescence markers
+
+proliferation_genes <- c("MKI67", "LMNB1", "TOP2A", "CENPF", "HMGB2")
+senescence_genes <- c("CDKN1A", "IL6", "CXCL8")
+
+seurat_obj <- AddModuleScore(
+  object = seurat_obj,
+  features = list(proliferation_genes),
+  name = "Proliferation_Signature"
+)
+
+seurat_obj <- AddModuleScore(
+  object = seurat_obj,
+  features = list(senescence_genes),
+  name = "Senescence_Signature"
+)
+
+seurat_obj$Proliferation_Normalized <- (seurat_obj$Proliferation_Signature1 - min(seurat_obj$Proliferation_Signature1)) / 
+  (max(seurat_obj$Proliferation_Signature1) - min(seurat_obj$Proliferation_Signature1))
+
+seurat_obj$Senescence_Normalized <- (seurat_obj$Senescence_Signature1 - min(seurat_obj$Senescence_Signature1)) / 
+  (max(seurat_obj$Senescence_Signature1) - min(seurat_obj$Senescence_Signature1))
+```
+
+```{r proliferation_plots5}
+p_prolif <- FeaturePlot(seurat_obj, features = "Proliferation_Signature1", reduction = "umap", 
+                        pt.size = dot_size, alpha = alpha_value) +
+  ggtitle("Putative negative senescence biomarkers") +
+  scale_color_gradient(low = "white", high = "purple", name = "Expression") +
+  theme_classic() +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 12, face = "bold"),
+    legend.text = element_text(size = 12)
+  )
+print(p_prolif)
+```
+
+ggsave("UMAP_Neg_Markers.png", 
+       plot = p_prolif,
+       width = 6, 
+       height = 5, 
+       dpi = 600, 
+       units = "in",
+       bg = "white")
+
+
+
+```{r proliferation_plots}
+p_prolif_box <- ggplot(seurat_obj@meta.data, aes(x = samples, y = Proliferation_Normalized, fill = samples)) +
+  geom_boxplot(alpha = 1, outlier.shape = NA) +
+  scale_fill_manual(values = c("NS" = "#4285F4", "SEN" = "#EA4335")) +
+  ggtitle("Putative negative senescence biomarkers") +
+  labs(fill = "Samples", y = "Normalized Expression", x = "Samples") +
+  theme_classic() +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 12, face = "bold"),
+    legend.text = element_text(size = 12)
+  )
+print(p_prolif_box)
+```
+
+
+ggsave("BOX_plot_Neg_Markers.png", 
+       plot = p_prolif_box,
+       width = 6, 
+       height = 5, 
+       dpi = 600, 
+       units = "in",
+       bg = "white")
+
+
+```{r senescence_plots}
+
+p_sen <- FeaturePlot(seurat_obj, features = "Senescence_Signature1", reduction = "umap", 
+                     pt.size = dot_size, alpha = alpha_value) +
+  ggtitle("Positive senescence markers") +
+  scale_color_gradient(low = "white", high = "purple", name = "Expression") +
+  theme_classic() +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 12, face = "bold"),
+    legend.text = element_text(size = 12)
+  )
+print(p_sen)
+```
+
+
+
+```{r senescence_plots2}
+p_sen_box <- ggplot(seurat_obj@meta.data, aes(x = samples, y = Senescence_Normalized, fill = samples)) +
+  geom_boxplot(alpha = 1, outlier.shape = NA) +
+  scale_fill_manual(values = c("NS" = "#4285F4", "SEN" = "#EA4335")) +
+  ggtitle("Positive senescence markers") +
+  labs(fill = "Samples", y = "Normalized Expression", x = "Samples") +
+  theme_classic() +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 12, face = "bold"),
+    legend.text = element_text(size = 12)
+  )
+print(p_sen_box)
+```
+
+
+
+# Sen MAYO Senescence Signature
+
+```{r mayo_signature, message=FALSE, warning=FALSE}
+# Alternatively, a senescence signature can be created with the SEN MAYO gene set 
+
+sen_mayo_geneset <- msigdbr(
+  species = "Homo sapiens",
+  category = "C2"
+)
+
+sen_mayo_geneset <- sen_mayo_geneset %>%
+  filter(gs_name == "SAUL_SEN_MAYO")
+
+mayo_senescence_genes <- sen_mayo_geneset$gene_symbol
+genes_in_seurat <- mayo_senescence_genes[mayo_senescence_genes %in% rownames(seurat_obj)]
+
+cat("Total genes in SAUL_SEN_MAYO gene set:", length(mayo_senescence_genes), "\n")
+cat("Genes present in Seurat object:", length(genes_in_seurat), "\n")
+
+seurat_obj <- AddModuleScore(
+  object = seurat_obj,
+  features = list(genes_in_seurat),
+  name = "MAYO_Senescence_Signature"
+)
+
+seurat_obj$MAYO_Senescence_Normalized <- (seurat_obj$MAYO_Senescence_Signature1 - min(seurat_obj$MAYO_Senescence_Signature1)) / 
+  (max(seurat_obj$MAYO_Senescence_Signature1) - min(seurat_obj$MAYO_Senescence_Signature1))
+
+p_mayo <- FeaturePlot(seurat_obj, features = "MAYO_Senescence_Signature1", reduction = "umap", 
+                      pt.size = dot_size, alpha = alpha_value) +
+  ggtitle("Sen Mayo Senescence Signature") +
+  scale_color_gradient(low = "white", high = "purple", name = "Expression") +
+  theme_classic() +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 12, face = "bold"),
+    legend.text = element_text(size = 12)
+  )
+print(p_mayo)
+```
+
+
+ggsave("UMAP_Sen_MAYO.png", 
+       plot = p_mayo,
+       width = 6, 
+       height = 5, 
+       dpi = 600, 
+       units = "in",
+
+
+
+
+```{r mayo_signature2, message=FALSE, warning=FALSE}
+p_mayo_box <- ggplot(seurat_obj@meta.data, aes(x = samples, y = MAYO_Senescence_Normalized, fill = samples)) +
+  geom_boxplot(alpha = 1, outlier.shape = NA) +
+  scale_fill_manual(values = c("NS" = "#4285F4", "SEN" = "#EA4335")) +
+  ggtitle("Sen Mayo Senescence Signature") +
+  labs(fill = "Samples", y = "Normalized Expression", x = "Samples") +
+  theme_classic() +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 12, face = "bold"),
+    legend.text = element_text(size = 12)
+  )
+print(p_mayo_box)
+```
+
+
+
+ggsave("BoxPlot_Sen_MAYO.png", 
+       plot = p_mayo_box,
+       width = 6, 
+       height = 5, 
+       dpi = 600, 
+       units = "in",
+       bg = "white")
+
+
+
+
+## Extensive Gamma-Delta T Cell Signature
+
+```{r extensive_gamma_delta2}
+
+# Create an unbiased signature for gamma delta T cell ligands (from Deseke & Prinz, 2020)
+# "Ligand recognition by the γδ TCR and discrimination between homeostasis and stress conditions"
+
+gamma_delta_ligands <- c(
+  "BTN3A1", "BTN3A2", "BTN3A3",
+  "BTN2A1", "BTN2A2",
+  "MICA", "MICB", "ULBP1", "ULBP2", "ULBP3",
+  "CD1D", "CD1C", "MR1",
+  "PROCR",
+  "ANXA2", "PVR", "ICAM1"
+)
+
+genes_present <- gamma_delta_ligands[gamma_delta_ligands %in% rownames(seurat_obj)]
+genes_missing <- gamma_delta_ligands[!gamma_delta_ligands %in% rownames(seurat_obj)]
+
+cat("=== Gene Availability Check ===\n")
+cat("Total genes in signature:", length(gamma_delta_ligands), "\n")
+cat("Genes present in dataset:", length(genes_present), "\n")
+cat("Genes missing from dataset:", length(genes_missing), "\n\n")
+
+seurat_obj <- AddModuleScore(
+  object = seurat_obj,
+  features = list(genes_present),
+  name = "Extensive_Gamma_Delta_Signature"
+)
+
+seurat_obj$Extensive_Gamma_Delta_Normalized <- (seurat_obj$Extensive_Gamma_Delta_Signature1 - min(seurat_obj$Extensive_Gamma_Delta_Signature1)) / 
+  (max(seurat_obj$Extensive_Gamma_Delta_Signature1) - min(seurat_obj$Extensive_Gamma_Delta_Signature1))
+
+p_ext_gd <- FeaturePlot(seurat_obj, features = "Extensive_Gamma_Delta_Signature1", reduction = "umap", 
+                        pt.size = dot_size, alpha = alpha_value) +
+  ggtitle("γδ T cell ligands") +
+  scale_color_gradient(low = "white", high = "purple", name = "Expression") +
+  theme_classic() +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 12, face = "bold"),
+    legend.text = element_text(size = 12)
+  )
+print(p_ext_gd)
+```
+
+
+ggsave("Gamma_Delta_Ligands_Extensive.png", 
+       plot = p_ext_gd,
+       width = 6, 
+       height = 5, 
+       dpi = 600, 
+       units = "in",
+       bg = "white")
+
+
+
+```{r extensive_gamma_delta3}
+p_ext_gd_box <- ggplot(seurat_obj@meta.data, aes(x = samples, y = Extensive_Gamma_Delta_Normalized, fill = samples)) +
+  geom_boxplot(alpha = 1, outlier.shape = NA) +
+  scale_fill_manual(values = c("NS" = "#4285F4", "SEN" = "#EA4335")) +
+  ggtitle("Extensive γδ T Cell Ligands Signature") +
+  labs(fill = "Samples", y = "Normalized Expression", x = "Samples") +
+  theme_classic() +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 12, face = "bold"),
+    legend.text = element_text(size = 12)
+  )
+print(p_ext_gd_box)
+```
+
+```{r}
+
+# Plot with a dashed line 
+
+sen_median <- median(seurat_obj@meta.data[seurat_obj@meta.data$samples == "SEN", "Extensive_Gamma_Delta_Normalized"])
+
+p_ext_gd_box <- ggplot(seurat_obj@meta.data, aes(x = samples, y = Extensive_Gamma_Delta_Normalized, fill = samples)) +
+  geom_boxplot(alpha = 1, outlier.shape = NA) +
+  geom_hline(yintercept = sen_median, linetype = "dashed", color = "black", size = 0.5) +
+  scale_fill_manual(values = c("NS" = "#4285F4", "SEN" = "#EA4335")) +
+  ggtitle("γδ T cell ligands") +
+  labs(fill = "Samples", y = "Normalized Expression", x = "Samples") +
+  theme_classic() +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 12, face = "bold"),
+    legend.text = element_text(size = 12)
+  )
+print(p_ext_gd_box)
+```
+
+
+
+ggsave("BOX_Gamma_Delta_Ligands_Extensive.png", 
+       plot = p_ext_gd_box,
+       width = 6, 
+       height = 5, 
+       dpi = 600, 
+       units = "in",
+       bg = "white")
+
+
