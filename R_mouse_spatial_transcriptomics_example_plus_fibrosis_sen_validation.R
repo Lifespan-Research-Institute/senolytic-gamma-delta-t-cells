@@ -4,8 +4,8 @@ library(ggplot2)
 library(dplyr)
 
 # Define file paths
-vehicle_path <- "C:/Users/gabriel.mecalaguna/Documents/processed_mouse_seurat_objects/d21_Veh_2_V10A20-052-A1.rds"
-bleomycin_path <- "C:/Users/gabriel.mecalaguna/Documents/processed_mouse_seurat_objects/d21_BLM_8_V10A20-053-C1.rds"
+vehicle_path <- "./processed_mouse_seurat_objects/d21_Veh_2_V10A20-052-A1.rds"
+bleomycin_path <- "./processed_mouse_seurat_objects/d21_BLM_8_V10A20-053-C1.rds"
 
 # Load Seurat objects
 cat("Loading Vehicle sample...\n")
@@ -219,3 +219,4 @@ for (feature in features) {
   # Optional: print progress
   cat("Saved:", feature, "_spatial_plot.tiff\n")
 }
+
