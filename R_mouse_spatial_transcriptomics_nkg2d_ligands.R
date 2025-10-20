@@ -5,7 +5,7 @@ library(dplyr)
 # Data retrieved from: https://www.ebi.ac.uk/biostudies/studies/S-BSST1410
 
 # LOAD THE DATASET
-mouse_data <- readRDS("C:/Users/gabriel.mecalaguna/Downloads/mm_visium_all_stutility_obj.rds")
+mouse_data <- readRDS("./mm_visium_all_stutility_obj.rds")
 
 # FUNCTION TO COUNT POSITIVE SPOTS
 count_positive_spots <- function(seurat_obj, gene_name) {
@@ -39,3 +39,4 @@ all_results <- bind_rows(results_list)
 all_results
 
 openxlsx::write.xlsx(all_results, "gene_positive_spots_results.xlsx")
+
