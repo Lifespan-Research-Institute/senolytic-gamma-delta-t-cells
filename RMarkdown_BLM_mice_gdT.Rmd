@@ -71,7 +71,7 @@ library(biomaRt)
 
 # Load data
 
-seurat_obj <- readRDS("C:/Users/gabriel.mecalaguna/Downloads/Bleomycin_0_7_14_kinetics_processed_matrix.rds")
+seurat_obj <- readRDS("./Bleomycin_0_7_14_kinetics_processed_matrix.rds")
 ```
 
 
@@ -549,6 +549,7 @@ print(p1_percentages)
   
   
   
+
 
 
 
