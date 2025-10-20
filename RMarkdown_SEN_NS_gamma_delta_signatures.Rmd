@@ -24,7 +24,7 @@ library(msigdbr)
 
 # Data was pre-processed in Cellenics to eliminate low quality cells, mitochondrial reads and doublets 
 
-seurat_obj <- readRDS("C:/Users/gabriel.mecalaguna/Downloads/snRNAseq_NS_vs_SEN_IMR_90.rds")
+seurat_obj <- readRDS("./snRNAseq_NS_vs_SEN_IMR_90.rds")
 print(seurat_obj)
 print(colnames(seurat_obj@meta.data))
 ```
@@ -761,5 +761,6 @@ ggsave("BOX_Gamma_Delta_Ligands_Extensive.png",
        dpi = 600, 
        units = "in",
        bg = "white")
+
 
 
