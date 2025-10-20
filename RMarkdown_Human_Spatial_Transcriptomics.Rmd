@@ -40,7 +40,7 @@ library(utf8)
 
 ```{r load-data}
 # 2. Load your data
-merged <- readRDS("C:/Users/gabriel.mecalaguna/Documents/HUMAN_IPF_CONTROL_merged_harmony.rds")
+merged <- readRDS("./HUMAN_IPF_CONTROL_merged_harmony.rds")
 ```
 
 ## UMAP and Frequency Plots
@@ -280,4 +280,5 @@ SpatialFeaturePlot(merged,
                    images = "Control",
                    pt.size = 2.5
 ) + NoLegend()
+
 ```
