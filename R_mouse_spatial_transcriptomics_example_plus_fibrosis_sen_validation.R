@@ -220,3 +220,30 @@ for (feature in features) {
   cat("Saved:", feature, "_spatial_plot.tiff\n")
 }
 
+
+# If both Prf1 and Cdkn1a are available, identify senescent cytotoxic γδ T cells
+if ("Prf1" %in% available_genes & "Cdkn1a" %in% rownames(merged_obj)) {
+  cdkn1a_positive <- FetchData(merged_obj, vars = "Cdkn1a")[["Cdkn1a"]] > 1
+  senescent_cytotoxic_gd <- gamma_delta_positive & prf1_positive & cdkn1a_positive
+  
+  merged_obj$Senescent_Cytotoxic_GD_T_cell <- ifelse(
+    senescent_cytotoxic_gd,
+    "Senescent Cytotoxic γδ T cells",
+    "Other"
+  )
+  
+  cat("\nSenescent Cytotoxic γδ T cell counts (γδ T cells AND Prf1+ AND Cdkn1a+):\n")
+  table(merged_obj$Senescent_Cytotoxic_GD_T_cell, merged_obj$sample)
+  
+  # Plot for Bleomycin
+  p_blm_sen_cytotoxic <- SpatialPlot(
+    object = merged_obj,
+    group.by = "Senescent_Cytotoxic_GD_T_cell",
+    images = "Bleomycin",
+    pt.size = 2.5,
+    cols = c("Senescent Cytotoxic γδ T cells" = "red", "Other" = "#E0E0E0"),
+    alpha = c("Senescent Cytotoxic γδ T cells" = 0.7)
+  ) + 
+    labs(fill = "Senescent Cytotoxic γδ T cells")
+  p_blm_sen_cytotoxic
+}
